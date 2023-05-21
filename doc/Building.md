@@ -1,7 +1,10 @@
 # Building Bone-GPT
 
 ## Requirements
+### Build System
+Bone-GPT depends on a sane build environment and `cmake`.
 
+### Piper
 Bone-GPT requires piper for TTS.  You will need to build and provide this before building Bone-GPT.
 Check it out from https://github.com/rhasspy/piper and build it or download a release package. Follow the piper README to build it.
 
@@ -10,3 +13,7 @@ Follow the [Build Guide|https://github.com/espeak-ng/espeak-ng/blob/master/docs/
 
 Piper also depends on ONNX runtime, which can be downloaded from https://github.com/microsoft/onnxruntime.
 Place ONNX runtime into Piper's `lib/$(uname -s)-$(uname -m:)`.
+
+
+## Build Bone-GPT
+Run `make`.
