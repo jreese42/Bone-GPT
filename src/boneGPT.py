@@ -49,7 +49,7 @@ def main():
         prompt_conversation.add_user_message(f.read())
     controller.set_prompt(prompt_conversation)
 
-    voice_pipeline = VoicePipeline()
+    voice_pipeline = VoicePipeline(config['Paths']['PiperPath'],"en-us-ryan-medium.onnx")
 
     repl(controller, voice_pipeline)
 
@@ -115,12 +115,14 @@ class OpenAIController:
         self.conversation.add_assistant_message(completion.choices[0].message.content)
         
 class VoicePipeline:
-    def __init__(self):
-        self.voice_cmd = "echo '{}' | ./piper --model en-us-ryan-medium.onnx --output_raw | ffplay -hide_banner -loglevel error -nostats -autoexit -nodisp -f s16le -ar 22050 -i -"
+    def __init__(self, piper_path, model_path):
+        self.piper_path = piper_path
+        self.model_path = model_path
+        self.voice_cmd = "echo '{line}' | {piper} --model {model} --output_raw | ffplay -hide_banner -loglevel error -nostats -autoexit -nodisp -f s16le -ar 22050 -i -".format(line='{line}',piper=self.piper_path, model=self.model_path)
     def vocalize(self, line):
         #For now, dump to the TTS pipeline as a system call
         line = line.replace('\n', '...')
-        os.system(self.voice_cmd.format(line))
+        os.system(self.voice_cmd.format(line=line))
 
 if __name__ == "__main__":
     main()
