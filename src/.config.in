@@ -1,6 +1,7 @@
 [OpenAI]
 OpenAIApiKey = 
 OpenAIOrganization = 
+OpenAIPromptFile = openai_prompt.txt
 
 [Paths]
 PiperPath = @PIPER_PATH@

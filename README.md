@@ -2,7 +2,7 @@
 The goal of this project is to build an AI voice pipeline for a halloween decoration as a demonstration of conversation voice assistant pipelines in public or semi-public settings.
 
 ## Building
-See the [Build guide](doc/Building.md) for information about requirements and how to build this project.
+See the [Build Guide](doc/Building.md) for information about requirements and how to build this project.
 
 ## Running
 First, activate the venv with `source build/.venv/bin/activate`.
@@ -10,7 +10,8 @@ Execute `build/boneGPT.sh`. Arguments are processed from the commandline first, 
 
 |Argument|Description|Default|Config Parameter|Environment Variable|
 |--------|-----------|-------|----------------|--------------------|
-|`-c`,`--config`|path to .config file|`.config`|||
+|`-c`,`--config`|path to config file|`.config`|||
+|`-pf`,`--promptfile`|path to prompt file|`openai_prompt.txt`|`OpenAIPromptFile`||
 |`--openai-key`|OpenAI API Key||`OpenAIApiKey`|`OPENAI_APIKEY`|
 |`--openai-organization`|OpenAI Organization||`OpenAIOrganization`|`OPENAI_ORGANIZATION`|
 

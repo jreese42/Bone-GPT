@@ -4,8 +4,6 @@ project(BoneGPT)
 
 enable_testing()
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "bin")
-
 # Find Python and Virtualenv. We don't actually use the output of the
 # find_package, but it'll give nicer errors.
 find_package(Python3 REQUIRED)
@@ -46,6 +44,9 @@ add_custom_target(Tests ALL
     DEPENDS .venv.requirements
     SOURCES requirements.txt
 )
+
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/boneGPT.py ${CMAKE_CURRENT_BINARY_DIR}/boneGPT.py COPYONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/openai_prompt.txt ${CMAKE_CURRENT_BINARY_DIR}/openai_prompt.txt COPYONLY)
 
 add_test(NAME run_tests
     COMMAND ${PYTEST} ${CMAKE_CURRENT_SOURCE_DIR}/test_sample.py
