@@ -1,1 +1,7 @@
+[OpenAI]
+OpenAIApiKey = 
+OpenAIOrganization = 
+
+[Paths]
 PiperPath = @PIPER_PATH@
+FfplayPath = @FFPLAY_PATH@

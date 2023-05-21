@@ -4,10 +4,13 @@ project(BoneGPT)
 
 enable_testing()
 
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "bin")
+
 # Find Python and Virtualenv. We don't actually use the output of the
 # find_package, but it'll give nicer errors.
 find_package(Python3 REQUIRED)
 find_program(VIRTUALENV virtualenv)
+find_program(FFPLAY_PATH ffplay)
 
 find_program(PIPER_PATH piper)
 if (NOT PIPER_PATH)
