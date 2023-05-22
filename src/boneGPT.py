@@ -50,12 +50,13 @@ def main():
         prompt_conversation.add_user_message(f.read())
     controller.set_prompt(prompt_conversation)
 
-    voice_pipeline = VoicePipeline(config['Paths']['PiperPath'],"en-us-ryan-medium.onnx")
+    voice_pipeline = VoicePipeline(config['Paths']['PiperPath'],"en-us-ryan-high.onnx")
     voice_pipeline.adjust_input_ambient_level()
 
     repl(controller, voice_pipeline)
 
 def repl(controller, voice_pipeline):
+    consecutive_idles = 0
 
     try:
         while True:
@@ -63,6 +64,12 @@ def repl(controller, voice_pipeline):
             voice_pipeline.adjust_input_ambient_level()
             user_input = voice_pipeline.take_input()
             if user_input == None:
+                if consecutive_idles >=  5: #5 * 3 seconds = 15 second clear timer
+                    print("Conversation Timeout.")
+                    controller.reset()
+                    consecutive_idles = 0
+                else:
+                    consecutive_idles = consecutive_idles+1
                 continue
 
             if user_input == "clear":
@@ -125,36 +132,41 @@ class VoicePipeline:
     def __init__(self, piper_path, model_path):
         self.piper_path = piper_path
         self.model_path = model_path
-        self.voice_cmd = "echo '{line}' | {piper} --model {model} --output_raw | ffplay -hide_banner -loglevel error -nostats -autoexit -nodisp -f s16le -ar 22050 -i -".format(line='{line}',piper=self.piper_path, model=self.model_path)
+        self.voice_cmd = "echo '{line}' | {piper} --model {model} --output_raw | ffmpeg -hide_banner -loglevel error -nostats -f s16le -ar 22050 -i - -filter_complex 'asplit [out1][out2];[out1]afreqshift=shift=-450[shifted];[shifted]aecho=0.8:0.88:80:0.5[echo];[echo]asubboost[sub];[sub]aphaser[final1];[out2]afreqshift=shift=-350[s2];[s2]asubboost[final2];[final1] [final2] amix[mixed];[mixed]volume=volume=10dB[vol];[vol]atempo=0.85' -f s16le pipe:1 | ffplay -hide_banner -loglevel error -nostats -autoexit -nodisp -f s16le -ar 22050 -i -".format(line='{line}',piper=self.piper_path, model=self.model_path)
         self.speech_recognizer = sr.Recognizer()
         self.speech_recognizer.energy_threshold = 4000
         self.speech_recognizer.dynamic_energy_threshold = True
+
     def vocalize(self, line):
         #For now, dump to the TTS pipeline as a system call
-        line = line.replace('\n', '...')
-        line = line.replace('\'', '\'\\\'\'')
+        line = line.replace('\n', '. ') #Some characters the TTS model pronounces but we don't want
+        line = line.replace(':', '. ') #Some characters the TTS model pronounces but we don't want
+        line = line.replace('\'', '\'\\\'\'') #Because we're dumping to shell currently
         os.system(self.voice_cmd.format(line=line))
+
     def adjust_input_ambient_level(self):
         with sr.Microphone() as source:
-            self.speech_recognizer.adjust_for_ambient_noise(source, 1)
+            self.speech_recognizer.adjust_for_ambient_noise(source, 0.5)
+
     def take_input(self):
         r = sr.Recognizer()
         with sr.Microphone() as source:
-            
             print("Listening...")
-            r.pause_threshold = 0.8
-            audio = r.listen(source)
+            r.pause_threshold = 0.6
+            try:
+                audio = r.listen(source, 3, 5)
+            except sr.WaitTimeoutError as e:
+                return None
 
-        try:
-            print("Recognizing...")   
-            #TODO Try Sphinx vs Google vs OpenAI Whisper
-            query = r.recognize_google(audio, language ='en-us')
-            print(f"User said: {query}\n")
-    
-        except Exception as e:
-            print(e)   
-            print("Unable to Recognize your voice.") 
-            return None
+            try:
+                print("Recognizing...")   
+                #TODO Try Sphinx vs Google vs OpenAI Whisper
+                query = r.recognize_google(audio, language ='en-us')
+                print(f"User said: {query}\n")
+            except Exception as e:
+                print(e)   
+                print("Unable to Recognize your voice.") 
+                return None
         
         return query
 
