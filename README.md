@@ -1,11 +1,10 @@
 # Bone-GPT
-The goal of this project is to build an AI voice pipeline for a halloween decoration as a demonstration of conversational voice assistant pipelines in public or semi-public settings.
+The goal of this project is to build an AI voice pipeline for a halloween decoration as a demonstration of conversational voice assistant pipelines in public or semi-public settings. It is also a test of local vs. remote AI-based SR, LLM, and TTS models.
 
 ## Building
 See the [Build Guide](doc/Building.md) for information about requirements and how to build this project.
 
 ## Running
-First, activate the venv with `source build/.venv/bin/activate`.
 Execute `build/boneGPT.sh`. Arguments are processed from the commandline first, then the config file, and finally the environment.
 
 |Argument|Description|Default|Config Parameter|Environment Variable|
