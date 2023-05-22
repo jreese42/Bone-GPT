@@ -5,6 +5,7 @@ import sys
 import argparse
 import configparser
 import openai
+import speech_recognition as sr
 
 def main():
     parser = argparse.ArgumentParser(
@@ -50,6 +51,7 @@ def main():
     controller.set_prompt(prompt_conversation)
 
     voice_pipeline = VoicePipeline(config['Paths']['PiperPath'],"en-us-ryan-medium.onnx")
+    voice_pipeline.adjust_input_ambient_level()
 
     repl(controller, voice_pipeline)
 
@@ -57,7 +59,12 @@ def repl(controller, voice_pipeline):
 
     try:
         while True:
-            user_input = input('>>> ')
+            # user_input = input('>>> ')
+            voice_pipeline.adjust_input_ambient_level()
+            user_input = voice_pipeline.take_input()
+            if user_input == None:
+                continue
+
             if user_input == "clear":
                 controller.reset()
                 print("Cleared conversation.")
@@ -119,10 +126,37 @@ class VoicePipeline:
         self.piper_path = piper_path
         self.model_path = model_path
         self.voice_cmd = "echo '{line}' | {piper} --model {model} --output_raw | ffplay -hide_banner -loglevel error -nostats -autoexit -nodisp -f s16le -ar 22050 -i -".format(line='{line}',piper=self.piper_path, model=self.model_path)
+        self.speech_recognizer = sr.Recognizer()
+        self.speech_recognizer.energy_threshold = 4000
+        self.speech_recognizer.dynamic_energy_threshold = True
     def vocalize(self, line):
         #For now, dump to the TTS pipeline as a system call
         line = line.replace('\n', '...')
+        line = line.replace('\'', '\'\\\'\'')
         os.system(self.voice_cmd.format(line=line))
+    def adjust_input_ambient_level(self):
+        with sr.Microphone() as source:
+            self.speech_recognizer.adjust_for_ambient_noise(source, 1)
+    def take_input(self):
+        r = sr.Recognizer()
+        with sr.Microphone() as source:
+            
+            print("Listening...")
+            r.pause_threshold = 0.8
+            audio = r.listen(source)
+
+        try:
+            print("Recognizing...")   
+            #TODO Try Sphinx vs Google vs OpenAI Whisper
+            query = r.recognize_google(audio, language ='en-us')
+            print(f"User said: {query}\n")
+    
+        except Exception as e:
+            print(e)   
+            print("Unable to Recognize your voice.") 
+            return None
+        
+        return query
 
 if __name__ == "__main__":
     main()
