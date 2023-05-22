@@ -12,7 +12,8 @@ Execute `build/boneGPT.sh`. Arguments are processed from the commandline first, 
 |--------|-----------|-------|----------------|--------------------|
 |`-c`,`--config`|path to config file|`.config`|||
 |`-pf`,`--promptfile`|path to prompt file|`openai_prompt.txt`|`OpenAIPromptFile`||
-|`--openai-key`|OpenAI API Key||`OpenAIApiKey`|`OPENAI_APIKEY`|
-|`--openai-organization`|OpenAI Organization||`OpenAIOrganization`|`OPENAI_ORGANIZATION`|
+|`--openai-key`|OpenAI API Key||`OpenAI.OpenAIApiKey`|`OPENAI_APIKEY`|
+|`--openai-organization`|OpenAI Organization||`OpenAI.OpenAIOrganization`|`OPENAI_ORGANIZATION`|
+|`--stt-provider`|Speech-to-Text Provider. `google`, `openai`, or `sphinx`|`google`|`General.STTProvider`||
 
 I'll clean this up later, this is just how it works for now.

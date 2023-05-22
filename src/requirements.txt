@@ -19,3 +19,4 @@ tqdm==4.65.0
 urllib3==1.26.6
 virtualenv==20.23.0
 yarl==1.9.2
+pocketsphinx==5.0.1

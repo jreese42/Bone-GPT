@@ -7,6 +7,8 @@ import configparser
 import openai
 import speech_recognition as sr
 
+validSttProviders = ['google', 'openai', 'sphinx']
+
 def main():
     parser = argparse.ArgumentParser(
                         prog='Bone-GPT', 
@@ -19,7 +21,9 @@ def main():
                         help='An API Key for OpenAI. May alternatively be provided in the .config file or in the environment as OPENAI_APIKEY')
     parser.add_argument('--openai-organization', dest='openaiOrganization',
                         help='An Organization for the OpenAI API. If omitted, the default Organization for your OpenAI account will be used. May alternatively be provided in the .config file or in the environment as OPENAI_ORGANIZATION')
-
+    parser.add_argument('--stt-provider', dest='sttProvider', choices=validSttProviders,
+                        help='Select Speech-to-Text provider.')
+    
     args = parser.parse_args()
 
     config = configparser.ConfigParser()
@@ -44,13 +48,22 @@ def main():
     if not args.promptFilePath:
         args.promptFilePath = config['OpenAI']['OpenAIPromptFile']
 
+    if not args.sttProvider:
+        args.sttProvider = config['General']['STTProvider']
+        if not args.sttProvider in validSttProviders:
+            print('\n\nError: STT Provider is not valid.\n\n', file=sys.stderr)
+            parser.print_help()
+            exit(-1)
+    
+    print("Using STT Provider '{}'".format(args.sttProvider))
+
     controller = OpenAIController(args.openaiApiKey, args.openaiOrganization)
     prompt_conversation = Conversation()
     with open(args.promptFilePath) as f:
         prompt_conversation.add_user_message(f.read())
     controller.set_prompt(prompt_conversation)
 
-    voice_pipeline = VoicePipeline(config['Paths']['PiperPath'],"en-us-ryan-high.onnx")
+    voice_pipeline = VoicePipeline(config['Paths']['PiperPath'],"en-us-ryan-high.onnx", args.sttProvider, args.openaiApiKey)
     voice_pipeline.adjust_input_ambient_level()
 
     repl(controller, voice_pipeline)
@@ -129,9 +142,11 @@ class OpenAIController:
         self.conversation.add_assistant_message(completion.choices[0].message.content)
         
 class VoicePipeline:
-    def __init__(self, piper_path, model_path):
+    def __init__(self, piper_path, model_path, stt_provider, openai_key = None):
         self.piper_path = piper_path
         self.model_path = model_path
+        self.stt_provider = stt_provider
+        self.openai_key = openai_key
         self.voice_cmd = "echo '{line}' | {piper} --model {model} --output_raw | ffmpeg -hide_banner -loglevel error -nostats -f s16le -ar 22050 -i - -filter_complex 'asplit [out1][out2];[out1]afreqshift=shift=-450[shifted];[shifted]aecho=0.8:0.88:80:0.5[echo];[echo]asubboost[sub];[sub]aphaser[final1];[out2]afreqshift=shift=-350[s2];[s2]asubboost[final2];[final1] [final2] amix[mixed];[mixed]volume=volume=10dB[vol];[vol]atempo=0.85' -f s16le pipe:1 | ffplay -hide_banner -loglevel error -nostats -autoexit -nodisp -f s16le -ar 22050 -i -".format(line='{line}',piper=self.piper_path, model=self.model_path)
         self.speech_recognizer = sr.Recognizer()
         self.speech_recognizer.energy_threshold = 4000
@@ -161,7 +176,12 @@ class VoicePipeline:
             try:
                 print("Recognizing...")   
                 #TODO Try Sphinx vs Google vs OpenAI Whisper
-                query = r.recognize_google(audio, language ='en-us')
+                if self.stt_provider == 'google':
+                    query = r.recognize_google(audio, language='en-US')
+                elif self.stt_provider == 'openai':
+                    query = r.recognize_whisper_api(audio, api_key=self.openai_key)
+                elif self.stt_provider == 'sphinx':
+                    query = r.recognize_sphinx(audio, language="en-US")
                 print(f"User said: {query}\n")
             except Exception as e:
                 print(e)   

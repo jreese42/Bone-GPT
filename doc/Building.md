@@ -17,3 +17,4 @@ Place ONNX runtime into Piper's `lib/$(uname -s)-$(uname -m:)`.
 
 ## Build Bone-GPT
 Run `make`.
+You'll need to provide a model file for Piper TTS.  Find it at https://github.com/rhasspy/piper and modify it in the code for now.  `voice-en-us-ryan-high` is recommended.

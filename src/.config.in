@@ -1,3 +1,6 @@
+[General]
+STTProvider = google
+
 [OpenAI]
 OpenAIApiKey = 
 OpenAIOrganization = 
