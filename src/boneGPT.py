@@ -6,6 +6,7 @@ import argparse
 import configparser
 import openai
 import speech_recognition as sr
+from subprocess import Popen, PIPE, DEVNULL
 
 validSttProviders = ['google', 'openai', 'sphinx']
 
@@ -66,6 +67,10 @@ def main():
     voice_pipeline = VoicePipeline(config['Paths']['PiperPath'],"en-us-ryan-high.onnx", args.sttProvider, args.openaiApiKey)
     voice_pipeline.adjust_input_ambient_level()
 
+    motd()
+    intro_line = "Happy Halloween! I'm Bonejangles, the skeleton who loves to give frights and delights. Are you brave enough to talk to me?"
+    voice_pipeline.vocalize(intro_line)
+
     repl(controller, voice_pipeline)
 
 def repl(controller, voice_pipeline):
@@ -95,9 +100,7 @@ def repl(controller, voice_pipeline):
                 break
 
             controller.conversation.add_user_message(user_input)
-            controller.fetch_completion()
-            print(controller.conversation.last_message())
-            voice_pipeline.vocalize(controller.conversation.last_message())
+            controller.stream_completion(voice_pipeline)
             print()
             
     except KeyboardInterrupt:
@@ -112,6 +115,13 @@ class Conversation:
         return str(self.messages)
     def clear(self):
         self.messages = []
+    def current_role(self):
+        try:
+            return self.messages[-1]["role"]
+        except:
+            return "none"
+    def add_message(self, role, message):
+        self.messages.append({"role": role, "content": message})
     def add_system_message(self, message):
         self.messages.append({"role": "system", "content": message})
     def add_user_message(self, message):
@@ -120,6 +130,9 @@ class Conversation:
         self.messages.append({"role": "assistant", "content": message})
     def last_message(self):
         return self.messages[-1]["content"]
+    def append_stream_content(self, content):
+        #inserts streaming content into the last message
+        self.messages[-1]["content"] += content
 
 class OpenAIController:
     def __init__(self, apiKey, organization):
@@ -128,6 +141,9 @@ class OpenAIController:
         self.model = "gpt-3.5-turbo"
         openai.api_key = apiKey
         openai.organization = organization
+
+        self.stream_current_role = "assistant"
+        self.stream_current_content = ""
     
     def set_prompt(self, prompt_conversation):
         self.prompt_conversation = prompt_conversation
@@ -140,6 +156,26 @@ class OpenAIController:
         completion = openai.ChatCompletion.create(model=self.model, messages=self.conversation.messages)
         #TODO check errors
         self.conversation.add_assistant_message(completion.choices[0].message.content)
+
+    def stream_completion(self, voice_pipeline):
+        stream = openai.ChatCompletion.create(model=self.model, messages=self.conversation.messages, stream=True)
+        #TODO check errors
+        for chunk in stream:
+            if 'choices' in chunk and 'delta' in chunk.choices[0]:
+                if 'role' in chunk.choices[0].delta:
+                    #new role means start a new message in the Conversation
+                    self.conversation.add_message(chunk.choices[0].delta.role, "")
+                    #if role is assistant and tokens sufficient or stop, open voice pipeline
+                if 'content' in chunk.choices[0].delta:
+                    #content delta gets appended into the current message, and also the voice pipeline
+                    self.conversation.append_stream_content(chunk.choices[0].delta.content)
+                    if self.conversation.current_role() == "assistant":
+                        voice_pipeline.handle_stream_content(chunk.choices[0].delta.content)
+                        print(chunk.choices[0].delta.content, end='')
+                if 'finish_reason' in chunk.choices[0]:
+                    if chunk.choices[0].finish_reason != None:
+                        voice_pipeline.handle_stream_stop()
+                        print("")
         
 class VoicePipeline:
     def __init__(self, piper_path, model_path, stt_provider, openai_key = None):
@@ -151,6 +187,30 @@ class VoicePipeline:
         self.speech_recognizer = sr.Recognizer()
         self.speech_recognizer.energy_threshold = 4000
         self.speech_recognizer.dynamic_energy_threshold = True
+        self.stream_content_queue = []
+        self.stream_content_buffer = []
+        self.ffplay_proc = None
+        self.ffmpeg_proc = None
+        self.piper_proc = None
+
+    def open_pipeline(self):
+        '''Open the pipeline for streaming data'''
+        piper_args = [self.piper_path, "--model", self.model_path, "--output_raw"]
+        ffmpeg_args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats", "-f", "s16le", "-ar", "22050", "-i", "-", "-filter_complex", "asplit [out1][out2];[out1]afreqshift=shift=-450[shifted];[shifted]aecho=0.8:0.88:80:0.5[echo];[echo]asubboost[sub];[sub]aphaser[final1];[out2]afreqshift=shift=-350[s2];[s2]asubboost[final2];[final1] [final2] amix[mixed];[mixed]volume=volume=10dB[vol];[vol]atempo=0.85", "-f", "s16le", "pipe:1"]
+        ffplay_args = ["ffplay", "-hide_banner", "-loglevel", "error", "-nostats", "-autoexit", "-nodisp", "-f", "s16le", "-ar", "22050", "-i", "-"]
+        self.piper_proc = Popen(piper_args, stdin=PIPE, stdout=PIPE, stderr=DEVNULL)
+        self.ffmpeg_proc = Popen(ffmpeg_args, stdin=self.piper_proc.stdout, stdout=PIPE)
+        self.ffplay_proc = Popen(ffplay_args, stdin=self.ffmpeg_proc.stdout, stdout=None)
+
+    def close_pipeline(self):
+        '''Close the pipeline'''
+        self.piper_proc.stdin.close()
+        self.piper_proc.wait()
+        self.ffmpeg_proc.wait()
+        self.ffplay_proc.wait()
+        self.ffplay_proc = None
+        self.ffmpeg_proc = None
+        self.piper_proc = None
 
     def vocalize(self, line):
         #For now, dump to the TTS pipeline as a system call
@@ -189,6 +249,69 @@ class VoicePipeline:
                 return None
         
         return query
+
+    def handle_stream_content(self, stream_content):
+        # print("stream content {}".format(stream_content))
+        #The TTS model needs complete lines to operate on, so split on punctuation and sent it to the pipeline in chunks.
+        #This speeds up the time to first data coming out of the pipeline
+        #TODO If initial response takes more than 1s, queue a "Hmm", "Sure", "Okay", etc with a short pause after
+        self.stream_content_buffer.insert(0, stream_content)
+
+        #queue data until a terminator
+        if any(p in stream_content for p in ".!?"):
+            #We found some punctuation. Start the TTS!
+            content = ""
+            while len(self.stream_content_buffer) > 0:
+                content += self.stream_content_buffer.pop()
+            self.stream_content_queue.insert(0, self.piper_token_sanitize(content) + '\n')
+
+            if not self.piper_proc:
+                self.open_pipeline()
+
+            #provide TTS with all data up until the last punctuation found
+            while len(self.stream_content_queue) > 0:
+                self.piper_proc.stdin.write(self.stream_content_queue.pop())
+            self.piper_proc.stdin.flush()
+            
+
+    def handle_stream_stop(self):
+        if len(self.stream_content_buffer) > 0:
+            content = ""
+            while len(self.stream_content_buffer) > 0:
+                content += self.stream_content_buffer.pop()
+            self.stream_content_queue.insert(0, self.piper_token_sanitize(content) + '\n')
+
+        if len(self.stream_content_queue) > 0:
+            self.open_pipeline()
+            #provide TTS with all data up until the last punctuation found
+            while len(self.stream_content_queue) > 0:
+                self.piper_proc.stdin.write(self.stream_content_queue.pop())
+        self.close_pipeline()
+    
+    def piper_token_sanitize(self, input_string):
+        '''Strip away or change certain tokens which piper has trouble pronouncing'''
+        #TODO This should be stored in a file
+        #These tokens get replaced only if the full word is found
+        sanitize_tokens_full_word_only = {
+            "the": "the", #TBD
+        }
+
+        #These tokens get replaced if they appear anywhere in the string
+        sanitize_tokens_anywhere = { 
+            "!\"": "!"
+        }
+
+        words = input_string.lower().split(' ')
+        for i in range(len(words)):
+            if words[i] in sanitize_tokens_full_word_only.keys():
+                words[i] = sanitize_tokens_full_word_only[words[i]]
+        out = ' '.join(words)
+        for token, substitution in sanitize_tokens_anywhere.items():
+            out = out.replace(token, substitution)
+        return out
+
+def motd():
+    print("                      :::!~!!!!!:.\n                  .xUHWH!! !!?M88WHX:.\n                .X*#M@$!!  !X!M$$$$$$WWx:.\n               :!!!!!!?H! :!$!$$$$$$$$$$8X:\n              !!~  ~:~!! :~!$!#$$$$$$$$$$8X:\n             :!~::!H!<   ~.U$X!?R$$$$$$$$MM!\n             ~!~!!!!~~ .:XW$$$U!!?$$$$$$RMM!\n               !:~~~ .:!M\"T#$$$$WX??#MRRMMM!\n               ~?WuxiW*`   `\"#$$$$8!!!!??!!!\n             :X- M$$$$       `\"T#$T~!8$WUXU~\n            :%`  ~#$$$m:        ~!~ ?$$$$$$\n          :!`.-   ~T$$$$8xx.  .xWW- ~\"\"##*\"\n.....   -~~:<` !    ~?T#$$@@W@*?$$      /`\nW$@@M!!! .!~~ !!     .:XUW$W!~ `\"~:    :\n#\"~~`.:x%`!!  !H:   !WM$$$$Ti.: .!WUn+!`\n:::~:!!`:X~ .: ?H.!u \"$$$B$$$!W:U!T$$M~\n.~~   :X@!.-~   ?@WTWo(\"*$$$W$TH$! `\nWi.~!X$?!-~    : ?$$$B$Wu(\"**$RM!\n$R@i.~~ !     :   ~$$$$$B$$en:``\n?MXT@Wx.~    :     ~\"##*$$$$M~")
 
 if __name__ == "__main__":
     main()
