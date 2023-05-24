@@ -294,17 +294,26 @@ class VoicePipeline:
         #These tokens get replaced only if the full word is found
         sanitize_tokens_full_word_only = {
             "the": "the", #TBD
+            "boo": "boooo",
+            "mwahaha": "mu-ha-ha",
         }
 
         #These tokens get replaced if they appear anywhere in the string
         sanitize_tokens_anywhere = { 
-            "!\"": "!"
+            "!\"": "!",
         }
 
         words = input_string.lower().split(' ')
         for i in range(len(words)):
-            if words[i] in sanitize_tokens_full_word_only.keys():
-                words[i] = sanitize_tokens_full_word_only[words[i]]
+            word = words[i]
+            punc = ""
+            #strip punctuation
+            if len(word) > 1 and word[-1] in ".!?":
+                punc = word[-1]
+                word = word[:-1]
+            if word in sanitize_tokens_full_word_only.keys():
+                words[i] = sanitize_tokens_full_word_only[word] + punc
+
         out = ' '.join(words)
         for token, substitution in sanitize_tokens_anywhere.items():
             out = out.replace(token, substitution)
