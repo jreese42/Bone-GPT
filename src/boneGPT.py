@@ -198,7 +198,7 @@ class VoicePipeline:
         piper_args = [self.piper_path, "--model", self.model_path, "--output_raw"]
         ffmpeg_args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats", "-f", "s16le", "-ar", "22050", "-i", "-", "-filter_complex", "asplit [out1][out2];[out1]afreqshift=shift=-450[shifted];[shifted]aecho=0.8:0.88:80:0.5[echo];[echo]asubboost[sub];[sub]aphaser[final1];[out2]afreqshift=shift=-350[s2];[s2]asubboost[final2];[final1] [final2] amix[mixed];[mixed]volume=volume=10dB[vol];[vol]atempo=0.85", "-f", "s16le", "pipe:1"]
         ffplay_args = ["ffplay", "-hide_banner", "-loglevel", "error", "-nostats", "-autoexit", "-nodisp", "-f", "s16le", "-ar", "22050", "-i", "-"]
-        self.piper_proc = Popen(piper_args, stdin=PIPE, stdout=PIPE, stderr=DEVNULL)
+        self.piper_proc = Popen(piper_args, text=True, stdin=PIPE, stdout=PIPE, stderr=DEVNULL)
         self.ffmpeg_proc = Popen(ffmpeg_args, stdin=self.piper_proc.stdout, stdout=PIPE)
         self.ffplay_proc = Popen(ffplay_args, stdin=self.ffmpeg_proc.stdout, stdout=None)
 
