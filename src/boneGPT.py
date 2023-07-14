@@ -6,6 +6,7 @@ import argparse
 import configparser
 import openai
 import speech_recognition as sr
+import json
 from subprocess import Popen, PIPE, DEVNULL
 
 validSttProviders = ['google', 'openai', 'sphinx']
@@ -61,7 +62,7 @@ def main():
     controller = OpenAIController(args.openaiApiKey, args.openaiOrganization)
     prompt_conversation = Conversation()
     with open(args.promptFilePath) as f:
-        prompt_conversation.add_user_message(f.read())
+        prompt_conversation = Conversation(json.load(f))
     controller.set_prompt(prompt_conversation)
 
     voice_pipeline = VoicePipeline(config['Paths']['PiperPath'],"en-us-ryan-high.onnx", args.sttProvider, args.openaiApiKey)
@@ -79,12 +80,13 @@ def repl(controller, voice_pipeline):
     try:
         while True:
             # user_input = input('>>> ')
-            voice_pipeline.adjust_input_ambient_level()
+            # voice_pipeline.adjust_input_ambient_level()
             user_input = voice_pipeline.take_input()
             if user_input == None:
                 if consecutive_idles >=  5: #5 * 3 seconds = 15 second clear timer
                     print("Conversation Timeout.")
                     controller.reset()
+                    voice_pipeline.reset()
                     consecutive_idles = 0
                 else:
                     consecutive_idles = consecutive_idles+1
@@ -107,8 +109,8 @@ def repl(controller, voice_pipeline):
         print('\n>>> Goodbye!')
 
 class Conversation:
-    def __init__(self):
-        self.messages = []
+    def __init__(self, messages=[]):
+        self.messages = messages
     def __repr__(self):
         return 'Conversation()'
     def __str__(self):
@@ -184,6 +186,7 @@ class VoicePipeline:
         self.stt_provider = stt_provider
         self.openai_key = openai_key
         self.voice_cmd = "echo '{line}' | {piper} --model {model} --output_raw | ffmpeg -hide_banner -loglevel error -nostats -f s16le -ar 22050 -i - -filter_complex 'asplit [out1][out2];[out1]afreqshift=shift=-450[shifted];[shifted]aecho=0.8:0.88:80:0.5[echo];[echo]asubboost[sub];[sub]aphaser[final1];[out2]afreqshift=shift=-350[s2];[s2]asubboost[final2];[final1] [final2] amix[mixed];[mixed]volume=volume=10dB[vol];[vol]atempo=0.85' -f s16le pipe:1 | ffplay -hide_banner -loglevel error -nostats -autoexit -nodisp -f s16le -ar 22050 -i -".format(line='{line}',piper=self.piper_path, model=self.model_path)
+        self.voice_cmd_delayed = "sleep {delay}; echo '{line}' | {piper} --model {model} --output_raw | ffmpeg -hide_banner -loglevel error -nostats -f s16le -ar 22050 -i - -f s16le pipe:1 | ffplay -hide_banner -loglevel error -nostats -autoexit -nodisp -f s16le -ar 22050 -i -".format(delay='{delay}', line='{line}',piper=self.piper_path, model=self.model_path)
         self.speech_recognizer = sr.Recognizer()
         self.speech_recognizer.energy_threshold = 4000
         self.speech_recognizer.dynamic_energy_threshold = True
@@ -192,6 +195,10 @@ class VoicePipeline:
         self.ffplay_proc = None
         self.ffmpeg_proc = None
         self.piper_proc = None
+        self.sfx_window_active = False
+        self.sfx_buffer = ""
+        self.void_window_active = False
+        self.supported_sfx = ["blackout", "lightning"]
 
     def open_pipeline(self):
         '''Open the pipeline for streaming data'''
@@ -212,16 +219,23 @@ class VoicePipeline:
         self.ffmpeg_proc = None
         self.piper_proc = None
 
-    def vocalize(self, line):
+    def reset(self):
+        self.sfx_window_active = False
+        self.sfx_buffer = ""
+        self.void_window_active = False
+
+    def vocalize(self, line, delay_secs=0):
         #For now, dump to the TTS pipeline as a system call
         line = line.replace('\n', '. ') #Some characters the TTS model pronounces but we don't want
         line = line.replace(':', '. ') #Some characters the TTS model pronounces but we don't want
         line = line.replace('\'', '\'\\\'\'') #Because we're dumping to shell currently
-        os.system(self.voice_cmd.format(line=line))
-
+        if delay_secs:
+            os.system(self.voice_cmd_delayed.format(line=line, delay=delay_secs))
+        else:
+            os.system(self.voice_cmd.format(line=line))
     def adjust_input_ambient_level(self):
         with sr.Microphone() as source:
-            self.speech_recognizer.adjust_for_ambient_noise(source, 0.5)
+            self.speech_recognizer.adjust_for_ambient_noise(source, 0.1)
 
     def take_input(self):
         r = sr.Recognizer()
@@ -255,37 +269,102 @@ class VoicePipeline:
         #The TTS model needs complete lines to operate on, so split on punctuation and sent it to the pipeline in chunks.
         #This speeds up the time to first data coming out of the pipeline
         #TODO If initial response takes more than 1s, queue a "Hmm", "Sure", "Okay", etc with a short pause after
-        self.stream_content_buffer.insert(0, stream_content)
+
+        #Capture content between braces which are "special effects"
+        sfx_trigger = None
+        sfx_window_next = self.sfx_window_active
+        if "{" in stream_content:
+            split = stream_content.split("{")
+            stream_content = split[0] #everything before the brace
+            self.sfx_buffer = split[1]
+            sfx_window_next = True
+        if "}" in stream_content:
+            split = stream_content.split("}")
+            self.sfx_buffer += split[0] #everything before the brace
+            stream_content = split[1]
+            sfx_trigger_token = len(self.stream_content_buffer[0][0].split(' ')) + len(stream_content.split(' '))
+            sfx_trigger = (self.sfx_buffer.strip(), sfx_trigger_token)
+            sfx_window_next = False
+            print(" (TRIGGER:" + self.sfx_buffer + ") ", end="") #TODO Action Triggers
+            self.sfx_buffer = ""
+
+        if self.sfx_window_active:
+            #We're between two braces, so put everything in the sfx buffer instead
+            self.sfx_buffer += stream_content
+            stream_content = ""
+        
+        #throw everything between *asterisks* into the void because Bonejangles uses too much lolspeak
+        void_window_next = self.void_window_active
+        if "*" in stream_content:
+            void_window_next = not void_window_next
+            split = stream_content.split("*")
+            if void_window_next: #First asterisk, take left side only
+                stream_content = split[0] #everything before the *
+            else: #Second asterisk, take right side only
+                stream_content = split[1]
+        if self.void_window_active:
+            stream_content = " "
+
+        self.sfx_window_active = sfx_window_next
+        self.void_window_active = void_window_next
+        '''stream_content_buffer includes a series of tuples with structure
+        (verbal_message, None) where verbal_message is the message to be spoken, or 
+        (verbal_message, (sfx_name, sfx_token_trigger)) where verbal_message is the message to be spoken, sfx_name is a special effect to trigger, and sfx_trigger_token is an integer value for which space-delimited token in verbal message should trigger the effect, immediately after the token is verbalized.
+        '''
+        self.stream_content_buffer.insert(0, (stream_content, sfx_trigger))
 
         #queue data until a terminator
-        if any(p in stream_content for p in ".!?"):
+        if any(p in stream_content for p in ".!?}"):
             #We found some punctuation. Start the TTS!
+            #First, } is a special character that denotes a special effect was used
+            #If we see this, we will start a second vocalization stream which ends at the time of the special effect
+            #which is used to trigger the special effect at the right time
             content = ""
+            sfx_trigger = None
             while len(self.stream_content_buffer) > 0:
-                content += self.stream_content_buffer.pop()
-            self.stream_content_queue.insert(0, self.piper_token_sanitize(content) + '\n')
+                data_tuple = self.stream_content_buffer.pop()
+                content += data_tuple[0]
+                if data_tuple[1]:
+                    sfx_trigger = data_tuple[1]
+                    sfx_trigger = (sfx_trigger[0], sfx_trigger[1] + len(content.split(' '))) #trigger token for the sfx is at the end of content
+            self.stream_content_queue.insert(0, (self.piper_token_sanitize(content) + '\n', sfx_trigger))
 
             if not self.piper_proc:
                 self.open_pipeline()
 
             #provide TTS with all data up until the last punctuation found
             while len(self.stream_content_queue) > 0:
-                self.piper_proc.stdin.write(self.stream_content_queue.pop())
+                content, sfx_trigger = self.stream_content_queue.pop()
+                self.piper_proc.stdin.write(content)
+                if sfx_trigger and sfx_trigger[0] in self.supported_sfx:
+                    #For now, provide a dumb hard delay for sfx and hope it times out close to right
+                    delay_secs = 0.85 * sfx_trigger[1]
+                    self.vocalize(sfx_trigger[0], delay_secs)
+                #TODO: Find a way to know when the sfx_trigger happens
             self.piper_proc.stdin.flush()
             
 
     def handle_stream_stop(self):
         if len(self.stream_content_buffer) > 0:
             content = ""
+            sfx_trigger = None
             while len(self.stream_content_buffer) > 0:
-                content += self.stream_content_buffer.pop()
-            self.stream_content_queue.insert(0, self.piper_token_sanitize(content) + '\n')
+                data_tuple = self.stream_content_buffer.pop()
+                content += data_tuple[0]
+                if data_tuple[1]:
+                    sfx_trigger = data_tuple[1]
+                    sfx_trigger = (sfx_trigger[0], sfx_trigger[1] + len(content.split(' '))) #trigger token for the sfx is at the end of content
+            self.stream_content_queue.insert(0, (self.piper_token_sanitize(content) + '\n', sfx_trigger))
 
         if len(self.stream_content_queue) > 0:
             self.open_pipeline()
             #provide TTS with all data up until the last punctuation found
             while len(self.stream_content_queue) > 0:
-                self.piper_proc.stdin.write(self.stream_content_queue.pop())
+                content, sfx_trigger = self.stream_content_queue.pop()
+                self.piper_proc.stdin.write(content)
+                if sfx_trigger and sfx_trigger[0] in self.supported_sfx:
+                    delay_secs = 0.85 * sfx_trigger[1]
+                    self.vocalize(sfx_trigger[0], delay_secs)
         self.close_pipeline()
     
     def piper_token_sanitize(self, input_string):
@@ -293,9 +372,10 @@ class VoicePipeline:
         #TODO This should be stored in a file
         #These tokens get replaced only if the full word is found
         sanitize_tokens_full_word_only = {
-            "the": "the", #TBD
+            "the": "the", #TBD how to get piper to pronounce this better
             "boo": "boooo",
             "mwahaha": "mu-ha-ha",
+            "muahaha": "mu-ha-ha",
         }
 
         #These tokens get replaced if they appear anywhere in the string
